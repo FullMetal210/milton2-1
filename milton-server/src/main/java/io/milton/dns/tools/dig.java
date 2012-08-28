@@ -4,17 +4,19 @@ package io.milton.dns.tools;
 import java.io.*;
 import java.net.*;
 
+import org.xbill.DNS.DClass;
+import org.xbill.DNS.ExtendedFlags;
+import org.xbill.DNS.Message;
+import org.xbill.DNS.Name;
+import org.xbill.DNS.Rcode;
+import org.xbill.DNS.Record;
+import org.xbill.DNS.ReverseMap;
+import org.xbill.DNS.Section;
+import org.xbill.DNS.SimpleResolver;
+import org.xbill.DNS.TSIG;
+import org.xbill.DNS.Type;
+
 import io.milton.dns.*;
-import io.milton.dns.record.DClass;
-import io.milton.dns.record.ExtendedFlags;
-import io.milton.dns.record.Message;
-import io.milton.dns.record.Rcode;
-import io.milton.dns.record.Record;
-import io.milton.dns.record.ReverseMap;
-import io.milton.dns.record.Section;
-import io.milton.dns.record.SimpleResolver;
-import io.milton.dns.record.TSIG;
-import io.milton.dns.record.Type;
 
 /**
  * @author Brian Wellington &lt;bwelling@xbill.org&gt;
