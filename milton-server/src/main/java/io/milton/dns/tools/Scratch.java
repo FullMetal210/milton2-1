@@ -22,7 +22,7 @@ import java.io.IOException;
  */
 public class Scratch {
 	public static void main(String[] args) throws IOException {
-		String[] digArgs = { "@127.0.0.1","g.g.g.g.g.b.c.blah.com", "A", "IN"};
+		String[] digArgs = { "@127.0.0.1","www.c.blah.com", "ANY", "IN"};
 		dig.main(digArgs);
 	}
 			

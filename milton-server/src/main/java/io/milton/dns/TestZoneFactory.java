@@ -2,9 +2,7 @@ package io.milton.dns;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -22,6 +20,7 @@ import io.milton.dns.record.ResourceRecord;
 
 public class TestZoneFactory implements ZoneFactory {
 
+	String zoneRoot = "blah.com";
 	Map<String, List<ResourceRecord>> map = new LinkedHashMap<String, List<ResourceRecord>>();
 
 	public TestZoneFactory() throws UnknownHostException {
@@ -47,11 +46,11 @@ public class TestZoneFactory implements ZoneFactory {
 	@Override
 	public Zone findBestZone(String domain) {
 		domain = domain.toLowerCase();
-		if ( !domain.endsWith("blah.com") ) {
+		if ( !domain.endsWith(zoneRoot) ) {
 			return null;
 		}
-		ZoneInfo info = new TestZoneInfo("blah.com");
-		Zone zone = new TestZone("blah.com", info);
+		ZoneInfo info = new TestZoneInfo(zoneRoot);
+		Zone zone = new TestZone(zoneRoot, info);
 		return zone;
 	}
 
@@ -87,7 +86,7 @@ public class TestZoneFactory implements ZoneFactory {
 
 		@Override
 		public List<ResourceRecord> getDomainRecords(String domain) {
-			return map.get(domain);
+			return map.get(domain.toLowerCase());
 		}
 		
 	}

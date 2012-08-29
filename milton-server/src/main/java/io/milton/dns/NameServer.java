@@ -17,8 +17,6 @@ package io.milton.dns;
 
 import io.milton.common.Service;
 import io.milton.dns.QueryResult.Status;
-import io.milton.dns.record.ResourceRecord;
-
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -35,7 +33,6 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 
-import org.apache.log4j.BasicConfigurator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xbill.DNS.CNAMERecord;
@@ -569,13 +566,9 @@ public class NameServer implements Service {
 	}
 
 	private DomainResource getDomainResource(Zone zone, Name domainName)  {
-		
-		String domainString = Utils.nameToString(domainName);
-		log.info("Fetching records for: " + domainString);
-		
+				
 		try {
-			List<ResourceRecord> recordList = zone.getDomainRecords(domainString);
-			DomainResource dr = DomainResource.fromDomain(zone, domainName, recordList);
+			DomainResource dr = DomainResource.lookupDomain(zone, domainName);
 			return dr;
 		} catch (TextParseException e) {
 			throw new RuntimeException(e);

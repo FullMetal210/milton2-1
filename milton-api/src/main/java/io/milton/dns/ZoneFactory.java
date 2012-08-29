@@ -7,8 +7,10 @@ package io.milton.dns;
 public interface ZoneFactory {
 
 	/**
-	 * Return the zone of authority that most closely contains the  given domain, or null if 
-	 * the domain isn't a descendant of any zones.
+	 * Return the zone of authority to which the requested domain belongs. If the domain
+	 * isn't a member of any zones, then the closest zone should be returned (ie one with 
+	 * information on the domain's ancestors. If the domain doesn't fall under any zones,
+	 * return null.
 	 * 
 	 * @param domain
 	 * @return

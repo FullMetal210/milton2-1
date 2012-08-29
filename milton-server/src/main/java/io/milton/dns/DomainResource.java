@@ -16,7 +16,7 @@ import org.xbill.DNS.TextParseException;
 import org.xbill.DNS.Type;
 
 /**
- * 
+ * Bridges the API and internals
  * @author Nick
  *
  */
@@ -28,6 +28,9 @@ class DomainResource {
 	/**
 	 * A DomainResource containing just the records pertaining to the zone
 	 * (NS and SOA)
+	 * @param zone
+	 * @return
+	 * @throws TextParseException
 	 */
 	static DomainResource fromZone(Zone zone) throws TextParseException {
 		if (zone == null) {
@@ -40,8 +43,14 @@ class DomainResource {
 		return dr;
 	}
 	
-	static DomainResource fromDomain(Zone zone, Name domainName, List<ResourceRecord> recordList) throws TextParseException {
-		if (zone == null || domainName == null || recordList == null) {
+	static DomainResource lookupDomain(Zone zone, Name domainName) throws TextParseException {
+		if (zone == null || domainName == null ) {
+			return null;
+		}
+		String domainString = Utils.nameToString(domainName);
+		logger.info("Fetching records for: " + domainString);
+		List<ResourceRecord> recordList = zone.getDomainRecords(domainString);
+		if (recordList == null) {
 			return null;
 		}
 		

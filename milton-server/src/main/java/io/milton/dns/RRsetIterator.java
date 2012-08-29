@@ -1,21 +1,19 @@
 package io.milton.dns;
 
-import io.milton.dns.record.ResourceRecord;
-
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.xbill.DNS.Name;
 import org.xbill.DNS.RRset;
 import org.xbill.DNS.TextParseException;
 import org.xbill.DNS.Type;
 
+/**
+ * Iterator over all RRsets for all domains in a zone. Used for outward AXFR transfers.
+ *
+ */
 class RRsetIterator implements Iterator<RRset>{
-
-	private static final Logger logger = LoggerFactory.getLogger(RRsetIterator.class);
 	
 	private DomainResource originNode;
 	private Iterator<String> domainIter;
@@ -25,30 +23,26 @@ class RRsetIterator implements Iterator<RRset>{
 	private boolean wantLastSoa = true;
 	
 	RRsetIterator(Zone zone)  {
-		if ( zone ==null) {
-			throw new RuntimeException("Null Zone");
-		}
+
 		this.zone = zone;
 		this.domainIter = zone.iterator();
-		if ( domainIter == null || !domainIter.hasNext() ) {
-			throw new RuntimeException("Null/empty Domain iterator");
+		if ( domainIter == null  ) {
+			throw new RuntimeException("Null Domain iterator");
 		}
 	
+		String rootString = zone.getRootDomain();
 		try {
-			String rootString = zone.getRootDomain();
 			Name rootName = Utils.stringToName(rootString);
-			logger.info("Getting records for " + rootString);
-			List<ResourceRecord> recordList = zone.getDomainRecords(rootString);
-			this.originNode = DomainResource.fromDomain(zone, rootName, recordList);
+			this.originNode = DomainResource.lookupDomain(zone, rootName);
 		} catch (TextParseException e) {
 			throw new RuntimeException(e);
 		} 
 		
 		if ( originNode.getRRset(Type.SOA) == null ) {
-			throw new RuntimeException("Zone missing SOA record");
+			throw new RuntimeException("Zone " + rootString + " missing SOA record");
 		}
 		if ( originNode.getRRset(Type.NS) == null ){
-			throw new RuntimeException("Zone missing NS rrset");
+			throw new RuntimeException("Zone " + rootString + " missing NS rrset");
 		}
 		
 		List<RRset> sets = originNode.getAllRRsets();
@@ -94,8 +88,7 @@ class RRsetIterator implements Iterator<RRset>{
 				DomainResource dr;
 				try {
 					Name domainName = Utils.stringToName(domainString);
-					List<ResourceRecord> recordList = zone.getDomainRecords(domainString);
-					dr = DomainResource.fromDomain(zone, domainName, recordList);
+					dr = DomainResource.lookupDomain(zone, domainName);
 				} catch (TextParseException e) {
 					throw new RuntimeException(e);
 				} 

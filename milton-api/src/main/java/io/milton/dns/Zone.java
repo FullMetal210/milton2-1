@@ -6,20 +6,20 @@ import java.util.Iterator;
 import java.util.List;
 
 /**
- * A zone of authority, which holds the records for all of its domains
+ * A zone of authority, which holds the records for all of its domains.
  * 
  * @author Nick
  */
 public interface Zone extends Iterable<String>{
 	
 	/**
-	 * The domain at the root of this zone
+	 * The domain at the root of this zone.
 	 * @return a domain name
 	 */
 	String getRootDomain();
 	
 	/**
-	 * Information about this zone
+	 * Information about this zone.
 	 * @return
 	 */
 	ZoneInfo getInfo();
@@ -37,8 +37,8 @@ public interface Zone extends Iterable<String>{
 	/**
 	 * Return the resource records associated with the given domain. The method should return
 	 * only the records for the particular node requested, rather than for the whole subtree.
-	 * @param domain
-	 * @return
+	 * @param domain a queried domain name
+	 * @return a list of resource records for domain
 	 */
 	List<ResourceRecord> getDomainRecords(String domain);
 

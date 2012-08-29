@@ -7,12 +7,12 @@ package io.milton.dns;
 class QueryResult {
 
 	enum Status {
-		UNKNOWN,
-		NXDOMAIN,
-		NXRRSET,
-		SUCCESSFUL,
-		CNAME,
-		DNAME,
+		UNKNOWN, 
+		NXDOMAIN, 
+		NXRRSET, 
+		SUCCESSFUL, 
+		CNAME, 
+		DNAME, 
 		DELEGATION
 	}
 
@@ -21,43 +21,45 @@ class QueryResult {
 		sr.setStatus(Status.NXDOMAIN);
 		return sr;
 	}
-	
+
 	private Status type;
 	private DomainResource domainResource;
-	private QueryResult(){
-		
+
+	private QueryResult() {
+
 	}
-	
-	QueryResult( Status type, DomainResource domainResource ){
-		if ( type == null || domainResource == null) {
+
+	QueryResult(Status type, DomainResource domainResource) {
+		if (type == null || domainResource == null) {
 			throw new RuntimeException("ResponseSet, null arg");
 		}
 		this.type = type;
 		this.domainResource = domainResource;
 	}
-	
-	Status getStatus(){
+
+	Status getStatus() {
 		return type;
 	}
-	
+
 	/**
-	 * The relevant domain that was found, or the closest existing
-	 * ancestor domain in the case of NXDOMAIN
-	 * @param domainResource
+	 * The relevant domain that was found (not necessarily the one that was
+	 * requested), or null in the case of NXDOMAIN
+	 * 
+	 * @return
 	 */
 	DomainResource getDomainResource() {
 		return domainResource;
 	}
-	
-	void setStatus (Status type) {
-		if ( type == null ) {
+
+	void setStatus(Status type) {
+		if (type == null) {
 			throw new RuntimeException("Null type");
 		}
 		this.type = type;
 	}
 
 	void setDomainResource(DomainResource domainResource) {
-		if ( domainResource == null ) {
+		if (domainResource == null) {
 			throw new RuntimeException("Null domainResource");
 		}
 		this.domainResource = domainResource;
