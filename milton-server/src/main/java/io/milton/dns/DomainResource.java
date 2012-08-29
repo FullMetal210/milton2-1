@@ -2,6 +2,7 @@ package io.milton.dns;
 
 import io.milton.dns.record.ResourceRecord;
 
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import org.slf4j.Logger;
@@ -39,39 +40,46 @@ class DomainResource {
 		DomainResource dr = new DomainResource();
 		dr.zone = zone;
 		dr.domainName = Utils.stringToName(zone.getRootDomain());
-		dr.addZoneRecords(zone.getInfo());
+		dr.addZoneRecords(zone);
 		return dr;
 	}
 	
-	static DomainResource lookupDomain(Zone zone, Name domainName) throws TextParseException {
-		if (zone == null || domainName == null ) {
-			return null;
-		}
-		String domainString = Utils.nameToString(domainName);
-		logger.info("Fetching records for: " + domainString);
-		List<ResourceRecord> recordList = zone.getDomainRecords(domainString);
-		if (recordList == null) {
+	static DomainResource fromDomain(Domain domain, Name domainName) throws TextParseException, ForeignDomainException{
+		
+		if ( domain == null || domainName == null ) {
 			return null;
 		}
 		
 		DomainResource dr = new DomainResource();
-		dr.zone = zone;
 		dr.domainName = domainName;
-		String domainLower = Utils.nameToString(domainName).toLowerCase();
-		String zoneRootLower = zone.getRootDomain().toLowerCase();
-		if (!domainLower.endsWith(zoneRootLower)) {
-			throw new RuntimeException("Zone.getRootDomain() = " + zone.getRootDomain() + 
-					", but must be an ancestor of domain = " + domainLower);
+		
+		List<ResourceRecord> recordList = domain.getRecords();
+		if (recordList == null) {
+			recordList = Collections.emptyList();
 		}
-		try {
-			Utils.stringToName(zoneRootLower);
-		} catch (TextParseException e) {
-			throw e;
-		}	
-		if (zoneRootLower.equals(domainLower)) {
-			dr.addZoneRecords(zone.getInfo());
-		}			
 		dr.addOrdinaryRecords(recordList);
+		
+		Zone zone = domain.getZone();
+		dr.zone = zone;
+		if ( zone == null ) {
+			logger.warn("Domain " + domainName + " has null Zone");
+		}
+		else {
+			String domainLower = Utils.nameToString(domainName).toLowerCase();
+			String zoneRootLower = dr.zone.getRootDomain().toLowerCase();
+			if (!domainLower.endsWith(zoneRootLower)) {
+				throw new RuntimeException("Zone.getRootDomain() = " + zone.getRootDomain() + 
+						", but must be an ancestor of domain = " + domainLower);
+			}
+			try {
+				Utils.stringToName(zoneRootLower);
+			} catch (TextParseException e) {
+				throw e;
+			}	
+			if (zoneRootLower.equals(domainLower)) {
+				dr.addZoneRecords(zone);
+			}			
+		}
 		return dr;
 	}
 	
@@ -146,24 +154,24 @@ class DomainResource {
 		}
 	}
 	
-	private void addZoneRecords( ZoneInfo zoneInfo ) throws TextParseException {
-		Name hostName = Utils.stringToName( zoneInfo.getPrimaryMaster() );
-		String emailStr = zoneInfo.getAdminEmail();
+	private void addZoneRecords( Zone zone ) throws TextParseException {
+		Name hostName = Utils.stringToName( zone.getPrimaryMaster() );
+		String emailStr = zone.getAdminEmail();
 		if ( emailStr.contains("@")) {
 			emailStr = emailStr.replace('@', '.');
 		}
 		Name emailName = Utils.stringToName(emailStr);
-		SOARecord soarr = new SOARecord( domainName, DClass.IN, zoneInfo.getTtl(), 
-				hostName, emailName, zoneInfo.getZoneSerialNumber(), zoneInfo.getRefresh(), 
-				zoneInfo.getRetry(), zoneInfo.getExpire(), zoneInfo.getMinimum());
+		SOARecord soarr = new SOARecord( domainName, DClass.IN, zone.getTtl(), 
+				hostName, emailName, zone.getZoneSerialNumber(), zone.getRefresh(), 
+				zone.getRetry(), zone.getExpire(), zone.getMinimum());
 		addRecord(soarr);
 		
-		if ( zoneInfo.getNameservers() == null || zoneInfo.getNameservers().isEmpty() ) {
+		if ( zone.getNameservers() == null || zone.getNameservers().isEmpty() ) {
 			throw new RuntimeException("Zone nameserver list is null/empty");
 		}
-		for ( String nsStr: zoneInfo.getNameservers() ) {
+		for ( String nsStr: zone.getNameservers() ) {
 			Name nsName =  Utils.stringToName(nsStr);
-			NSRecord nsRec = new NSRecord(domainName, DClass.IN, zoneInfo.getTtl(), nsName);
+			NSRecord nsRec = new NSRecord(domainName, DClass.IN, zone.getTtl(), nsName);
 			addRecord(nsRec);
 		}
 	}

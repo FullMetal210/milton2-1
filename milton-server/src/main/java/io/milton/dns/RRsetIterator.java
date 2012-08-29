@@ -4,10 +4,13 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.xbill.DNS.Name;
 import org.xbill.DNS.RRset;
 import org.xbill.DNS.TextParseException;
 import org.xbill.DNS.Type;
+
 
 /**
  * Iterator over all RRsets for all domains in a zone. Used for outward AXFR transfers.
@@ -15,28 +18,27 @@ import org.xbill.DNS.Type;
  */
 class RRsetIterator implements Iterator<RRset>{
 	
+	private static final Logger logger = LoggerFactory.getLogger(RRsetIterator.class);
+	
 	private DomainResource originNode;
 	private Iterator<String> domainIter;
 	private Zone zone;
+	private DomainFactory factory;
 	private RRset[] current;
 	private int count;
 	private boolean wantLastSoa = true;
 	
-	RRsetIterator(Zone zone)  {
+	RRsetIterator(Zone zone, DomainFactory factory)  {
 
 		this.zone = zone;
+		this.factory = factory;
 		this.domainIter = zone.iterator();
 		if ( domainIter == null  ) {
 			throw new RuntimeException("Null Domain iterator");
 		}
 	
 		String rootString = zone.getRootDomain();
-		try {
-			Name rootName = Utils.stringToName(rootString);
-			this.originNode = DomainResource.lookupDomain(zone, rootName);
-		} catch (TextParseException e) {
-			throw new RuntimeException(e);
-		} 
+		this.originNode = getDomainResource(rootString);
 		
 		if ( originNode.getRRset(Type.SOA) == null ) {
 			throw new RuntimeException("Zone " + rootString + " missing SOA record");
@@ -85,13 +87,7 @@ class RRsetIterator implements Iterator<RRset>{
 					continue;
 				}
 				
-				DomainResource dr;
-				try {
-					Name domainName = Utils.stringToName(domainString);
-					dr = DomainResource.lookupDomain(zone, domainName);
-				} catch (TextParseException e) {
-					throw new RuntimeException(e);
-				} 
+				DomainResource dr = getDomainResource(domainString);
 				if ( dr == null ) {
 					continue;
 				}
@@ -112,5 +108,19 @@ class RRsetIterator implements Iterator<RRset>{
 		throw new UnsupportedOperationException("Can't remove RRset");
 	}
 	
-
+	private DomainResource getDomainResource(String domainString) {
+		try {
+			logger.info("Fetching domain: "+ domainString);
+			Domain domain = factory.getDomain(domainString);
+			Name domainName = Utils.stringToName(domainString);
+			DomainResource dr = DomainResource.fromDomain(domain, domainName);
+			return dr;
+		} catch (ForeignDomainException e) {
+			logger.error("Iterator returned foreign domain: " + domainString);
+			throw new RuntimeException(e);
+		} catch (TextParseException e) {
+			logger.error("Invalid domain name: " + e.getMessage());
+			throw new RuntimeException(e);
+		}
+	}
 }

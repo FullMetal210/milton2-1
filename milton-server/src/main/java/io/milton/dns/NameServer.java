@@ -62,16 +62,16 @@ public class NameServer implements Service {
 	static final int FLAG_DNSSECOK = 1;
 	static final int FLAG_SIGONLY = 2;
 	
-	protected ZoneFactory zoneFactory;
+	protected DomainFactory domainFactory;
 	private List<InetSocketAddress> sockAddrs = new ArrayList<InetSocketAddress>();
 	private List<TcpListener> tcpListeners = new ArrayList<TcpListener>();
 	private List<UdpListener> udpListeners = new ArrayList<UdpListener>();
 	private volatile boolean running;
 	private boolean checkWild = true;
 	
-	public NameServer(ZoneFactory zoneFactory, InetSocketAddress... sockAddrs) {
+	public NameServer(DomainFactory domainFactory, InetSocketAddress... sockAddrs) {
 		
-		this.zoneFactory = zoneFactory;
+		this.domainFactory = domainFactory;
 		if (sockAddrs == null || sockAddrs.length == 0 ) {
 			this.sockAddrs.add(new InetSocketAddress(53));
 		} else {
@@ -148,13 +148,8 @@ public class NameServer implements Service {
 	}
 
 	private void addGlue(Message response, Name name, int flags) {
-
-		Zone zone = getZone(name);
-		if (zone == null) {
-			return;
-		}
 		
-		DomainResource dr = getDomainResource(zone, name);
+		DomainResource dr = getDomainResourceNoEx(name);
 		if( dr == null ) {
 			return ;
 		}
@@ -198,19 +193,16 @@ public class NameServer implements Service {
 			type = Type.ANY;
 			flags |= FLAG_SIGONLY;
 		}
-
-		Zone zone = getZone(name);
-		if ( zone == null ) {
-			log.info("Zone is null, no authoritative data");
-			return Rcode.NXDOMAIN;
-		}
 		
-		QueryResult sr = performQuery(zone, name, type);		
+		QueryResult sr = performQuery(name, type);		
 		DomainResource dr = sr.getDomainResource();
 		DomainResource zoneDr = null;
-		if ( /*dr != null &&*/ iterations == 0 ) {
+		if ( dr != null && iterations == 0 ) {
 			try {
-				zoneDr = DomainResource.fromZone(zone);
+				Zone zone = dr.getZone();
+				if ( zone != null ) {
+					zoneDr = DomainResource.fromZone(zone);
+				}
 			} catch (TextParseException e) {
 				throw new RuntimeException(e);
 			}
@@ -305,9 +297,14 @@ public class NameServer implements Service {
 	}
 	
 	
-	private QueryResult performQuery(Zone zone, Name name, int type) {
+	private QueryResult performQuery(Name name, int type) {
 
-		DomainResource dr = getDomainResource(zone, name);
+		DomainResource dr;
+		try {
+			dr = getDomainResource(name);
+		} catch (ForeignDomainException e) {
+			return QueryResult.nxDomain();
+		}
 		
 		if (dr != null) {
 			
@@ -336,17 +333,20 @@ public class NameServer implements Service {
 		
 		int rlabels = Name.root.labels(); //should be 1
 		int labels = name.labels();
+		DomainResource prevDr = null;
 		/*
 		 * Check if ancestor node contains a DNAME or delegation
 		 */
 		for (int tlabels = labels - 1; tlabels >= rlabels; tlabels--) {
 			
 			Name tName = new Name(name, labels - tlabels);	
-			dr = getDomainResource(zone, tName);	
+			dr = getDomainResourceNoEx(tName);	
 			if (dr == null) {
 				continue;
 			}
-			
+			if ( prevDr == null ) {
+				prevDr = dr;
+			}
 			/* If this is a delegation, return that. */
 			if ( dr.isDelegation() ) {
 				return new QueryResult(Status.DELEGATION, dr);		
@@ -366,7 +366,7 @@ public class NameServer implements Service {
 			
 			for (int i = 0; i < labels - /*olabels*/ 1; i++) {
 				Name tname = name.wild(i + 1);
-				dr = getDomainResource(zone, tname);		
+				dr = getDomainResourceNoEx(tname);		
 				if (dr == null) {
 					continue;
 				}
@@ -388,6 +388,9 @@ public class NameServer implements Service {
 			}
 		}
 
+		if ( prevDr != null ) {
+			return new QueryResult(Status.NXDOMAIN, prevDr);
+		}
 		return QueryResult.nxDomain();
 	}
 	
@@ -505,11 +508,16 @@ public class NameServer implements Service {
 	byte[] doAXFR(Name name, Message query, TSIG tsig, TSIGRecord qtsig,
 			Socket s) {
 		
-		String requestedName = Utils.nameToString(name);
-		Zone zone = zoneFactory.findBestZone(requestedName);
+		DomainResource dr = getDomainResourceNoEx(name);
+		if ( dr == null ) {
+			return errorMessage(query, Rcode.REFUSED);
+		}
+		Zone zone = dr.getZone();
 		if ( zone == null ) {
 			return errorMessage(query, Rcode.REFUSED);
 		}
+		
+		String requestedName = Utils.nameToString(name);
 		String zoneRoot = zone.getRootDomain();
 		if ( !zoneRoot.equalsIgnoreCase(requestedName) ) {
 			return errorMessage(query, Rcode.REFUSED);
@@ -518,7 +526,7 @@ public class NameServer implements Service {
 			return errorMessage(query, Rcode.REFUSED);
 		}
 
-		Iterator<RRset> rrsetIter = new RRsetIterator(zone);
+		Iterator<RRset> rrsetIter = new RRsetIterator(zone, domainFactory);
 		try {
 			DataOutputStream dataOut = new DataOutputStream(s.getOutputStream());
 			int id = query.getHeader().getID();
@@ -565,24 +573,29 @@ public class NameServer implements Service {
 		return buildErrorMessage(query.getHeader(), rcode, query.getQuestion());
 	}
 
-	private DomainResource getDomainResource(Zone zone, Name domainName)  {
-				
+	private DomainResource getDomainResource(Name domainName) throws ForeignDomainException  {
+		
+		String domainString = Utils.nameToString(domainName);
 		try {
-			DomainResource dr = DomainResource.lookupDomain(zone, domainName);
+			log.info("Fetching records for: " + domainString);
+			Domain domain =domainFactory.getDomain(domainString);
+			DomainResource dr = DomainResource.fromDomain(domain, domainName);
 			return dr;
 		} catch (TextParseException e) {
 			throw new RuntimeException(e);
+		} catch (ForeignDomainException e) {
+			throw e;
 		}
 	}
 	
-	private Zone getZone( Name domainName) {
-		
-		String domainString = Utils.nameToString(domainName);
-		log.info("Finding best Zone for: " + domainString);
-		Zone zone = zoneFactory.findBestZone(domainString);
-		return zone;
+	private DomainResource getDomainResourceNoEx(Name domainName) {
+		try {
+			return getDomainResource(domainName);
+		} catch (ForeignDomainException e) {
+			return null;
+		}
 	}
-
+	
 
 	class TcpListener implements Runnable {
 
