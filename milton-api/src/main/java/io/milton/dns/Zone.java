@@ -1,10 +1,12 @@
 package io.milton.dns;
 
+import io.milton.dns.record.ResourceRecord;
+
 import java.util.Iterator;
 import java.util.List;
 
 /**
- * A zone of authority, which holds the records for all of its domains.
+ * A zone of authority
  * 
  * @author Nick
  */
@@ -12,9 +14,17 @@ public interface Zone extends Iterable<String>{
 	
 	/**
 	 * The domain at the root of this zone.
-	 * @return a domain name
+	 * @return
 	 */
 	String getRootDomain();
+	
+	/**
+	 * The resource records associated with the given domain. The method should return
+	 * only the records for the particular node requested, rather than for the whole subtree.
+	 * @param domain a queried domain name
+	 * @return a list of resource records for domain
+	 */
+	List<ResourceRecord> getRecords(String domain);
 	
 	/**
 	 * Return an iterator over all the domains contained in this zone's tree,

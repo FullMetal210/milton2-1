@@ -17,6 +17,11 @@ package io.milton.dns;
 
 import io.milton.common.Service;
 import io.milton.dns.QueryResult.Status;
+import io.milton.dns.filter.Filter;
+import io.milton.dns.filter.FilterChain;
+import io.milton.dns.filter.Request;
+import io.milton.dns.filter.Response;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -62,25 +67,32 @@ public class NameServer implements Service {
 	static final int FLAG_DNSSECOK = 1;
 	static final int FLAG_SIGONLY = 2;
 	
-	protected DomainFactory domainFactory;
+	private static ThreadLocal<DnsAdapterRequest> tlRequest = new ThreadLocal<DnsAdapterRequest>();
+	private static ThreadLocal<DnsAdapterResponse> tlResponse = new ThreadLocal<DnsAdapterResponse>();
+	
+	protected ZoneFactory zoneFactory;
 	private List<InetSocketAddress> sockAddrs = new ArrayList<InetSocketAddress>();
 	private List<TcpListener> tcpListeners = new ArrayList<TcpListener>();
 	private List<UdpListener> udpListeners = new ArrayList<UdpListener>();
+	private List<Filter> filters;
 	private volatile boolean running;
 	private boolean checkWild = true;
 	
-	public NameServer(DomainFactory domainFactory, InetSocketAddress... sockAddrs) {
+	public NameServer(ZoneFactory zoneFactory, InetSocketAddress... sockAddrs) {
 		
-		this.domainFactory = domainFactory;
+		this.zoneFactory = zoneFactory;
 		if (sockAddrs == null || sockAddrs.length == 0 ) {
 			this.sockAddrs.add(new InetSocketAddress(53));
 		} else {
 			this.sockAddrs.addAll(Arrays.asList(sockAddrs));
 		}
+		this.filters = new ArrayList<Filter>();
+		this.filters.add(new StandardFilter(this));
 	}
 
 	@Override
 	public void start() {
+
 		log.info("Starting DNS server");
 		running = true;
 		for (InetSocketAddress sockAddr : sockAddrs) {
@@ -107,6 +119,10 @@ public class NameServer implements Service {
 		for (UdpListener ul : udpListeners) {
 			ul.close();
 		}
+	}
+	
+	public void addFilter(Filter filter) {
+		filters.add(0, filter);
 	}
 
 	private void addRRset(Name name, Message response, RRset rrset, int section, int flags) {
@@ -149,7 +165,12 @@ public class NameServer implements Service {
 
 	private void addGlue(Message response, Name name, int flags) {
 		
-		DomainResource dr = getDomainResourceNoEx(name);
+		Zone zone = getZone(name);
+		if (zone == null) {
+			return;
+		}
+		
+		DomainResource dr = getDomainResource(zone, name);
 		if( dr == null ) {
 			return ;
 		}
@@ -194,15 +215,16 @@ public class NameServer implements Service {
 			flags |= FLAG_SIGONLY;
 		}
 		
-		QueryResult sr = performQuery(name, type);		
+		Zone zone = getZone(name);
+		if ( zone == null ) {
+			return Rcode.NXDOMAIN;
+		}
+		QueryResult sr = performQuery(zone, name, type);
 		DomainResource dr = sr.getDomainResource();
 		DomainResource zoneDr = null;
-		if ( dr != null && iterations == 0 ) {
+		if (  iterations == 0 ) {
 			try {
-				Zone zone = dr.getZone();
-				if ( zone != null ) {
-					zoneDr = DomainResource.fromZone(zone);
-				}
+				zoneDr = DomainResource.fromZone(zone);
 			} catch (TextParseException e) {
 				throw new RuntimeException(e);
 			}
@@ -297,15 +319,16 @@ public class NameServer implements Service {
 	}
 	
 	
-	private QueryResult performQuery(Name name, int type) {
+	private QueryResult performQuery(Zone zone, Name name, int type) {
 
-		DomainResource dr;
+		DomainResource dr = getDomainResource(zone, name);	
+		Name zoneRoot;
 		try {
-			dr = getDomainResource(name);
-		} catch (ForeignDomainException e) {
-			return QueryResult.nxDomain();
+			zoneRoot = Utils.stringToName(zone.getRootDomain());
+		} catch (TextParseException e) {
+			throw new RuntimeException(e);
 		}
-		
+				
 		if (dr != null) {
 			
 			/* If this is an ANY lookup, return everything. */
@@ -333,19 +356,18 @@ public class NameServer implements Service {
 		
 		int rlabels = Name.root.labels(); //should be 1
 		int labels = name.labels();
-		DomainResource prevDr = null;
 		/*
 		 * Check if ancestor node contains a DNAME or delegation
 		 */
 		for (int tlabels = labels - 1; tlabels >= rlabels; tlabels--) {
 			
 			Name tName = new Name(name, labels - tlabels);	
-			dr = getDomainResourceNoEx(tName);	
+			if ( !tName.subdomain(zoneRoot) ) {
+				break;
+			}
+			dr = getDomainResource(zone, tName);	
 			if (dr == null) {
 				continue;
-			}
-			if ( prevDr == null ) {
-				prevDr = dr;
 			}
 			/* If this is a delegation, return that. */
 			if ( dr.isDelegation() ) {
@@ -366,7 +388,10 @@ public class NameServer implements Service {
 			
 			for (int i = 0; i < labels - /*olabels*/ 1; i++) {
 				Name tname = name.wild(i + 1);
-				dr = getDomainResourceNoEx(tname);		
+				if (!tname.subdomain(zoneRoot)) {
+					break;
+				}
+				dr = getDomainResource(zone, tname);		
 				if (dr == null) {
 					continue;
 				}
@@ -388,13 +413,135 @@ public class NameServer implements Service {
 			}
 		}
 
-		if ( prevDr != null ) {
-			return new QueryResult(Status.NXDOMAIN, prevDr);
-		}
 		return QueryResult.nxDomain();
 	}
 	
+		
+	private void setErrorMsg(DnsAdapterResponse response, Message query, int rcode) {
+		
+		try {
+			byte[] data = errorMessage(query, rcode);
+			Message errMsg = new Message(data);
+			response.setMessage(errMsg);
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
+	}
+	
+	void process() throws IOException {
+				
+		DnsAdapterRequest dnsReq = tlRequest.get();
+		DnsAdapterResponse dnsResp = tlResponse.get();
+		Message query = dnsReq.getMessage();	
+		Record queryRecord = query.getQuestion();
+		OPTRecord queryOPT = query.getOPT();
+		Socket s = dnsReq.getSocket();
+		
+		int maxLength = 512;
+		if (s != null) {
+			maxLength = 65535;
+		} else if (queryOPT != null) {
+			maxLength = Math.max(queryOPT.getPayloadSize(), 512);
+		} 
+		int flags = 0;
+		if (queryOPT != null && (queryOPT.getFlags() & ExtendedFlags.DO) != 0) {
+			flags = FLAG_DNSSECOK;
+		}
 
+		Message reply = new Message(query.getHeader().getID());
+		reply.getHeader().setFlag(Flags.QR);
+		if (query.getHeader().getFlag(Flags.RD)) {
+			reply.getHeader().setFlag(Flags.RD);
+		}
+		reply.addRecord(queryRecord, Section.QUESTION);
+
+		Name name = queryRecord.getName();
+		int type = queryRecord.getType();
+		int dclass = queryRecord.getDClass();
+		if (type == Type.AXFR && s != null) {
+			try {
+				byte[] data = doAXFR(name, query, null, null, s);
+				dnsResp.setMessage(new Message(data));
+				return;
+			} catch (IOException e) {
+				throw new RuntimeException(e);
+			}
+		}
+		
+		byte rcode = addAnswer(reply, name, type, dclass, 0, flags);
+		if (rcode != Rcode.NOERROR && rcode != Rcode.NXDOMAIN) {
+			setErrorMsg(dnsResp, query, rcode);
+			return;
+		}
+		addAdditional(reply, flags);
+
+		if (queryOPT != null) {
+			int optflags = (flags == FLAG_DNSSECOK) ? ExtendedFlags.DO : 0;
+			OPTRecord opt = new OPTRecord((short) 4096, rcode, (byte) 0,
+					optflags);
+			reply.addRecord(opt, Section.ADDITIONAL);
+		}
+
+		reply.setTSIG(null, Rcode.NOERROR, null);
+		byte[] replyBytes = reply.toWire(maxLength);
+		dnsResp.setMessage(new Message(replyBytes));
+	}
+	
+	private byte[] checkError(Message query) {
+		
+		Header header = query.getHeader();
+		if (header.getFlag(Flags.QR)) {
+			return null;
+		}
+		if (header.getRcode() != Rcode.NOERROR) {
+			return errorMessage(query, Rcode.FORMERR);
+		}
+		if (header.getOpcode() != Opcode.QUERY) {
+			return errorMessage(query, Rcode.NOTIMP);
+		}
+		TSIGRecord queryTSIG = query.getTSIG();
+		if (queryTSIG != null) {
+			return errorMessage(query,Rcode.NOTIMP);
+		}
+		
+		Record queryRecord = query.getQuestion();
+		int dclass = queryRecord.getDClass();
+		if ( dclass != DClass.IN ) {
+			/* Needs consideration */
+			log.info("Unsupported DClass: " + DClass.string(dclass) );
+			return errorMessage(query, Rcode.SERVFAIL);
+		}
+		int type = queryRecord.getType();
+		if (!Type.isRR(type) && type != Type.ANY) {
+			return errorMessage(query, Rcode.NOTIMP);
+		}
+		return null;
+	}
+	
+	public byte[] getReply(Message query, InetAddress remoteAddr, Socket s ) {
+		
+		log.info("Received request, generating reply");
+		
+		byte[] error = checkError(query);
+		if ( error != null ) {
+			return error;
+		}
+		
+		try {
+			DnsAdapterRequest request = new DnsAdapterRequest(query, remoteAddr, s);
+			DnsAdapterResponse response = new DnsAdapterResponse();
+			tlRequest.set(request);
+			tlResponse.set(response);
+			FilterChain chain = new FilterChain(filters);
+			chain.process(request, response);
+			Message reply = response.getMessage();
+			return reply.toWire();////maxLength
+		} finally {
+			tlRequest.remove();
+			tlResponse.remove();
+		}
+	}
+	
 	/*
 	 * Note: a null return value means that the caller doesn't need to do
 	 * anything. Currently this only happens if this is an AXFR request over
@@ -403,12 +550,14 @@ public class NameServer implements Service {
 	byte[] generateReply(Message query, byte[] in, int length, Socket s)
 			throws IOException {
 		
+		
+
 		log.info("Received request, generating reply");
 		Header header;
 		boolean badversion;
 		int maxLength;
 		int flags = 0;
-
+		
 		header = query.getHeader();
 		if (header.getFlag(Flags.QR)) {
 			return null;
@@ -491,6 +640,7 @@ public class NameServer implements Service {
 		response.setTSIG(tsig, Rcode.NOERROR, queryTSIG);
 		return response.toWire(maxLength);
 	}
+	
 
 	byte[] buildErrorMessage(Header header, int rcode, Record question) {
 		Message response = new Message();
@@ -508,25 +658,16 @@ public class NameServer implements Service {
 	byte[] doAXFR(Name name, Message query, TSIG tsig, TSIGRecord qtsig,
 			Socket s) {
 		
-		DomainResource dr = getDomainResourceNoEx(name);
-		if ( dr == null ) {
-			return errorMessage(query, Rcode.REFUSED);
-		}
-		Zone zone = dr.getZone();
-		if ( zone == null ) {
-			return errorMessage(query, Rcode.REFUSED);
-		}
+		Zone zone = getZone(name);
 		
-		String requestedName = Utils.nameToString(name);
-		String zoneRoot = zone.getRootDomain();
-		if ( !zoneRoot.equalsIgnoreCase(requestedName) ) {
+		if ( zone == null ) {
 			return errorMessage(query, Rcode.REFUSED);
 		}
 		if ( zone.iterator() == null ) {
 			return errorMessage(query, Rcode.REFUSED);
 		}
 
-		Iterator<RRset> rrsetIter = new RRsetIterator(zone, domainFactory);
+		Iterator<RRset> rrsetIter = new RRsetIterator(zone);
 		try {
 			DataOutputStream dataOut = new DataOutputStream(s.getOutputStream());
 			int id = query.getHeader().getID();
@@ -573,27 +714,22 @@ public class NameServer implements Service {
 		return buildErrorMessage(query.getHeader(), rcode, query.getQuestion());
 	}
 
-	private DomainResource getDomainResource(Name domainName) throws ForeignDomainException  {
+	private Zone getZone( Name domainName) {
 		
-		String domainString = Utils.nameToString(domainName);
+		String domainString = Utils.nameToString(domainName).toLowerCase();
+		log.info("Finding best Zone for: " + domainString);
+		Zone zone = zoneFactory.findBestZone(domainString);
+		return zone;
+	}
+	
+	private DomainResource getDomainResource(Zone zone, Name domainName) {
+		
 		try {
-			log.info("Fetching records for: " + domainString);
-			Domain domain =domainFactory.getDomain(domainString);
-			DomainResource dr = DomainResource.fromDomain(domain, domainName);
+			DomainResource dr = DomainResource.lookupDomain(zone,domainName);
 			return dr;
 		} catch (TextParseException e) {
 			throw new RuntimeException(e);
-		} catch (ForeignDomainException e) {
-			throw e;
-		}
-	}
-	
-	private DomainResource getDomainResourceNoEx(Name domainName) {
-		try {
-			return getDomainResource(domainName);
-		} catch (ForeignDomainException e) {
-			return null;
-		}
+		} 
 	}
 	
 
@@ -640,7 +776,8 @@ public class NameServer implements Service {
 				byte[] response = null;
 				try {
 					query = new Message(in);
-					response = generateReply(query, in, in.length, s);
+					InetAddress remoteAddr = s.getInetAddress();
+					response = getReply(query,remoteAddr,s);
 					if (response == null) {
 						return;
 					}
@@ -743,7 +880,8 @@ public class NameServer implements Service {
 					byte[] response = null;
 					try {
 						query = new Message(in);
-						response = generateReply(query, in, indp.getLength(), null);
+						InetAddress remoteAddr = indp.getAddress();
+						response = getReply(query, remoteAddr, null);
 						if (response == null) {
 							continue;
 						}

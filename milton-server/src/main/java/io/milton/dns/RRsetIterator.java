@@ -23,28 +23,27 @@ class RRsetIterator implements Iterator<RRset>{
 	private DomainResource originNode;
 	private Iterator<String> domainIter;
 	private Zone zone;
-	private DomainFactory factory;
+	private String zoneRootString;
 	private RRset[] current;
 	private int count;
 	private boolean wantLastSoa = true;
 	
-	RRsetIterator(Zone zone, DomainFactory factory)  {
+	RRsetIterator(Zone zone)  {
 
 		this.zone = zone;
-		this.factory = factory;
 		this.domainIter = zone.iterator();
 		if ( domainIter == null  ) {
 			throw new RuntimeException("Null Domain iterator");
 		}
-	
-		String rootString = zone.getRootDomain();
-		this.originNode = getDomainResource(rootString);
+
+		this.zoneRootString = zone.getRootDomain().toLowerCase();
+		this.originNode = getDomainResource(zoneRootString);
 		
 		if ( originNode.getRRset(Type.SOA) == null ) {
-			throw new RuntimeException("Zone " + rootString + " missing SOA record");
+			throw new RuntimeException("Zone " + zoneRootString + " missing SOA record");
 		}
 		if ( originNode.getRRset(Type.NS) == null ){
-			throw new RuntimeException("Zone " + rootString + " missing NS rrset");
+			throw new RuntimeException("Zone " + zoneRootString + " missing NS rrset");
 		}
 		
 		List<RRset> sets = originNode.getAllRRsets();
@@ -83,7 +82,7 @@ class RRsetIterator implements Iterator<RRset>{
 			while ( domainIter.hasNext() ) {
 				
 				String domainString = domainIter.next();
-				if (domainString.equalsIgnoreCase(zone.getRootDomain())) {
+				if (domainString.equalsIgnoreCase(zoneRootString)) {
 					continue;
 				}
 				
@@ -110,14 +109,9 @@ class RRsetIterator implements Iterator<RRset>{
 	
 	private DomainResource getDomainResource(String domainString) {
 		try {
-			logger.info("Fetching domain: "+ domainString);
-			Domain domain = factory.getDomain(domainString);
 			Name domainName = Utils.stringToName(domainString);
-			DomainResource dr = DomainResource.fromDomain(domain, domainName);
+			DomainResource dr = DomainResource.lookupDomain(zone, domainName);
 			return dr;
-		} catch (ForeignDomainException e) {
-			logger.error("Iterator returned foreign domain: " + domainString);
-			throw new RuntimeException(e);
 		} catch (TextParseException e) {
 			logger.error("Invalid domain name: " + e.getMessage());
 			throw new RuntimeException(e);

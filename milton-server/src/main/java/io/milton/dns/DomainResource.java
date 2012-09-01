@@ -44,41 +44,36 @@ class DomainResource {
 		return dr;
 	}
 	
-	static DomainResource fromDomain(Domain domain, Name domainName) throws TextParseException, ForeignDomainException{
+	static DomainResource lookupDomain(Zone zone, Name domainName) throws TextParseException{
 		
-		if ( domain == null || domainName == null ) {
+		if ( zone == null || domainName == null ) {
 			return null;
 		}
 		
-		DomainResource dr = new DomainResource();
-		dr.domainName = domainName;
-		
-		List<ResourceRecord> recordList = domain.getRecords();
+		String domainLower = Utils.nameToString(domainName).toLowerCase();
+		String zoneRootLower = zone.getRootDomain().toLowerCase();
+		logger.info("Fetching records for: " + domainLower);
+		List<ResourceRecord> recordList = zone.getRecords(domainLower);
 		if (recordList == null) {
-			recordList = Collections.emptyList();
+			return null;
 		}
-		dr.addOrdinaryRecords(recordList);
+
+		if (!domainLower.endsWith(zoneRootLower)) {
+			throw new RuntimeException("Zone.getRootDomain() = " + zone.getRootDomain() + 
+					", but must be an ancestor of domain = " + domainLower);
+		}
+		try {
+			Utils.stringToName(zoneRootLower);
+		} catch (TextParseException e) {
+			throw e;
+		}
 		
-		Zone zone = domain.getZone();
+		DomainResource dr = new DomainResource();
 		dr.zone = zone;
-		if ( zone == null ) {
-			logger.warn("Domain " + domainName + " has null Zone");
-		}
-		else {
-			String domainLower = Utils.nameToString(domainName).toLowerCase();
-			String zoneRootLower = dr.zone.getRootDomain().toLowerCase();
-			if (!domainLower.endsWith(zoneRootLower)) {
-				throw new RuntimeException("Zone.getRootDomain() = " + zone.getRootDomain() + 
-						", but must be an ancestor of domain = " + domainLower);
-			}
-			try {
-				Utils.stringToName(zoneRootLower);
-			} catch (TextParseException e) {
-				throw e;
-			}	
-			if (zoneRootLower.equals(domainLower)) {
-				dr.addZoneRecords(zone);
-			}			
+		dr.domainName = domainName;
+		dr.addOrdinaryRecords(recordList);
+		if (zoneRootLower.equals(domainLower)) {
+			dr.addZoneRecords(zone);
 		}
 		return dr;
 	}
@@ -114,9 +109,9 @@ class DomainResource {
 	
 	boolean isZone() {
 		if ( zone != null ) {
-			String name = Utils.nameToString(domainName);
-			String zoneRoot = zone.getRootDomain();
-			return name.equalsIgnoreCase(zoneRoot);
+			String nameString = Utils.nameToString(domainName);
+			String zoneRootString = zone.getRootDomain();
+			return nameString.equalsIgnoreCase(zoneRootString);
 		}
 		return false;
 	}
